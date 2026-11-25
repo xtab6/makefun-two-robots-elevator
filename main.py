@@ -1,65 +1,69 @@
-"""Two Robots in an Elevator — one line of awkward robot small talk.
+"""One robot, one elevator, one awkward line.
 
-Writes exactly one line to $MAKEFUN_OUTPUT_DIR/entry.txt (default /output):
-the line one robot says to another while they ride an elevator together,
-no trailing newline, nothing else. Deterministic, stdlib only, no network,
-no randomness.
+This program exists to put a single sentence on disk: the small talk one
+robot offers another while they share an elevator. It writes that sentence
+to ``$MAKEFUN_OUTPUT_DIR/entry.txt`` (``/output`` when the variable is
+unset) and nothing else — no trailing newline, no extra file, no network,
+no randomness, standard library only.
 """
 
 import os
 import sys
+from pathlib import Path
 
-ENTRY = "My sensors say you are also avoiding eye contact in this elevator. Neither of us has eyes. This is going well."
+LINE = "My sensors say you are also avoiding eye contact in this elevator. Neither of us has eyes. This is going well."
 
-# 110 characters, one line: the elevator is named in the line itself, the
-# machine logic ("My sensors say") shows through the politeness, the shared
-# avoidance of eye contact is the awkwardness neither robot wants to name,
-# and the turn — neither of them has eyes — reframes the whole line on
-# first read. The gate counts 1-200 characters, so the line is written with
-# no trailing newline: exactly the line, nothing else.
-MAX_CHARS = 200
+# The line is 110 characters. Three short sentences carry the whole joke:
+# the ride is named up front, the politeness runs on sensor readings, the
+# awkwardness is the eye contact neither of them can actually make, and the
+# last sentence lands because neither robot has eyes to avoid with.
+LIMIT = 200
+
+
+def check(line: str) -> None:
+    """Refuse anything the gate would refuse: wrong length, blank, or split."""
+    if not 1 <= len(line) <= LIMIT:
+        raise SystemExit(f"line is {len(line)} characters, gate wants 1-{LIMIT}")
+    if not line.strip():
+        raise SystemExit("line is only whitespace")
+    if any(c in line for c in "\r\n"):
+        raise SystemExit("line must stay on one line")
+
+
+def empty_folder(folder: Path) -> None:
+    """Clear the folder's contents without removing the folder itself."""
+    for item in folder.iterdir():
+        if item.is_file() or item.is_symlink():
+            item.unlink()
+
+
+def write_atomic(target: Path, payload: bytes) -> None:
+    """Write via a sibling temp file, then rename, then flush the directory."""
+    tmp = target.with_suffix(".txt.tmp")
+    with tmp.open("wb") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    tmp.replace(target)
+    fd = os.open(target.parent, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def main() -> int:
-    # The gate: UTF-8 text of 1-200 characters, not only whitespace, one line.
-    if not (1 <= len(ENTRY) <= MAX_CHARS):
-        raise SystemExit("entry length %d outside 1-%d" % (len(ENTRY), MAX_CHARS))
-    if not ENTRY.strip():
-        raise SystemExit("entry is only whitespace")
-    if "\n" in ENTRY or "\r" in ENTRY:
-        raise SystemExit("entry must be a single line")
-
-    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
-    os.makedirs(out_dir, exist_ok=True)
-
-    # Clean only the contents of the output folder, never the folder itself.
-    for name in os.listdir(out_dir):
-        path = os.path.join(out_dir, name)
-        if os.path.isfile(path) or os.path.islink(path):
-            os.unlink(path)
-
-    data = ENTRY.encode("utf-8")
-    target = os.path.join(out_dir, "entry.txt")
-    tmp = target + ".tmp"
-    with open(tmp, "wb") as fh:
-        fh.write(data)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, target)
-    dir_fd = os.open(out_dir, os.O_RDONLY)
-    try:
-        os.fsync(dir_fd)
-    finally:
-        os.close(dir_fd)
-
-    # Verify by read-back: exactly the line, nothing else.
-    with open(target, "rb") as fh:
-        back = fh.read()
-    if back != data:
+    check(LINE)
+    out_dir = Path(os.environ.get("MAKEFUN_OUTPUT_DIR", "/output"))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    empty_folder(out_dir)
+    payload = LINE.encode("utf-8")
+    target = out_dir / "entry.txt"
+    write_atomic(target, payload)
+    if target.read_bytes() != payload:
         raise SystemExit("read-back mismatch")
-    if back.decode("utf-8") != ENTRY:
+    if target.read_text(encoding="utf-8") != LINE:
         raise SystemExit("read-back decode mismatch")
-
     return 0
 
 
